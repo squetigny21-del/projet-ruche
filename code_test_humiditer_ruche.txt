@@ -1,0 +1,35 @@
+#include <Wire.h>
+#include <DHT20.h>
+
+DHT20 dht20;
+
+void setup() {
+  // Initialisation du bus I2C sur les broches par défaut de l'ESP32
+  // SDA = GPIO 21, SCL = GPIO 22
+  Wire.begin(); 
+  
+  Serial.begin(115200);
+  Serial.println("--- TEST CAPTEUR DHT20 ---");
+
+  dht20.begin();
+}
+
+void loop() {
+  // On lit le capteur environ toutes les 2 secondes
+  if (millis() - dht20.lastRead() >= 2000) {
+    int status = dht20.read();
+    
+    if (status == DHT20_OK) {
+      Serial.print("Température : ");
+      Serial.print(dht20.getTemperature(), 1);
+      Serial.print(" °C | ");
+      
+      Serial.print("Humidité : ");
+      Serial.print(dht20.getHumidity(), 1);
+      Serial.println(" %");
+    } else {
+      Serial.print("Erreur de lecture, code : ");
+      Serial.println(status);
+    }
+  }
+}

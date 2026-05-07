@@ -1,0 +1,52 @@
+#include <OneWire.h>
+#include <DallasTemperature.h>
+
+// Le fil Jaune du DS18B20 est sur le GPIO 4
+#define ONE_WIRE_BUS 4 
+
+// Setup du bus OneWire
+OneWire oneWire(ONE_WIRE_BUS);
+// Passage de la référence au capteur
+DallasTemperature sensors(&oneWire);
+
+void setup() {
+  // On démarre la communication série à 115200 baud
+  Serial.begin(115200);
+  delay(1000);
+  
+  Serial.println("--- TEST CAPTEUR DS18B20 ---");
+
+  // Initialisation du capteur
+  sensors.begin();
+  
+  // Vérification de la présence du capteur
+  if (sensors.getDeviceCount() == 0) {
+    Serial.println("ERREUR : Aucun capteur DS18B20 trouvé !");
+    Serial.println("Vérifie : 1. Le câblage (GND, 3.3V, GPIO 4)");
+    Serial.println("         2. La présence de la résistance de 4.7k ohms");
+  } else {
+    Serial.print("Capteur détecté ! Nombre trouvé : ");
+    Serial.println(sensors.getDeviceCount());
+  }
+}
+
+void loop() {
+  // Demande de lecture au capteur
+  Serial.print("Lecture en cours... ");
+  sensors.requestTemperatures(); 
+  
+  // Récupération de la température en Celsius
+  float tempC = sensors.getTempCByIndex(0);
+
+  // Vérification si la lecture a réussi
+  if(tempC != DEVICE_DISCONNECTED_C) {
+    Serial.print("Température : ");
+    Serial.print(tempC);
+    Serial.println(" °C");
+  } else {
+    Serial.println("Erreur : Impossible de lire les données du capteur.");
+  }
+
+  // Attendre 2 secondes avant la prochaine mesure
+  delay(2000);
+}
