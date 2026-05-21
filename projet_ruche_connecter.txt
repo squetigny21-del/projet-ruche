@@ -1,0 +1,118 @@
+#include <Arduino.h>
+#include "HX711.h"
+#include <Wire.h>
+#include <DHT20.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+#include <HardwareSerial.h>
+
+// --- CONFIGURATION DES BROCHES ---
+const int DOUT1 = 18; const int SCK1 = 19;
+const int DOUT2 = 23; const int SCK2 = 5;
+const int DOUT3 = 17; const int SCK3 = 16;
+const int DOUT4 = 4;  const int SCK4 = 2;
+#define ONE_WIRE_BUS 15
+
+// Liaison Série Wio-E5 (RX=14, TX=27)
+HardwareSerial loRaSerial(1);
+
+// Objets
+HX711 scale1, scale2, scale3, scale4;
+DHT20 dht;
+OneWire oneWire(ONE_WIRE_BUS);
+DallasTemperature sensors(&oneWire);
+
+// --- CALIBRATION ---
+long offset1 = 61621;   float factor1 = 46592.0;
+long offset2 = -149201; float factor2 = 45796.0;
+long offset3 = -182623; float factor3 = 45555.0;
+long offset4 = -40804;  float factor4 = 44618.0;
+
+float tarePlateau = 0; 
+float poidsTotal, humidite, tempC;
+
+// Fonction pour lire les réponses du module LoRa (utile pour le moniteur série)
+void lireLoRa() {
+  delay(500);
+  while (loRaSerial.available()) {
+    Serial.write(loRaSerial.read());
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  loRaSerial.begin(9600, SERIAL_8N1, 14, 27); 
+  
+  Wire.begin(); dht.begin(); sensors.begin(); 
+  scale1.begin(DOUT1, SCK1); scale2.begin(DOUT2, SCK2);
+  scale3.begin(DOUT3, SCK3); scale4.begin(DOUT4, SCK4);
+
+  Serial.println("\n[SYSTEM] Initialisation...");
+
+  // --- 1. TARE AUTOMATIQUE ---
+  Serial.println("[SYSTEM] Calcul de la tare (5s)... Ne touchez à rien.");
+  delay(3000);
+  float p1_i = (scale1.read() - offset1) / factor1;
+  float p2_i = (scale2.read() - offset2) / factor2;
+  float p3_i = (scale3.read() - offset3) / factor3;
+  float p4_i = (scale4.read() - offset4) / factor4;
+  tarePlateau = p1_i + p2_i + p3_i + p4_i;
+  Serial.printf("[SYSTEM] Tare mémorisée : %.3f kg\n", tarePlateau);
+
+  // --- 2. CONFIGURATION LORA ---
+  Serial.println("[LORA] Configuration des clés TTN...");
+  loRaSerial.print("AT+ID=DevEui,\"70B3D57ED0076B07\"\r\n"); delay(500);
+  loRaSerial.print("AT+ID=AppEui,\"8000000000000002\"\r\n"); delay(500);
+  loRaSerial.print("AT+KEY=AppKey,\"417458237CFFA5787A5CAF0D7526F380\"\r\n"); delay(500);
+  loRaSerial.print("AT+DR=EU868\r\n"); delay(500);
+  loRaSerial.print("AT+MODE=LWOTAA\r\n"); delay(500);
+  
+  Serial.println("[LORA] Tentative de JOIN...");
+  loRaSerial.print("AT+JOIN\r\n");
+  delay(8000); // On attend que le réseau réponde
+  lireLoRa();
+
+  Serial.println("\n[SYSTEM] Prêt ! Début de la boucle.");
+}
+
+void loop() {
+  // 1. MESURES
+  float p1 = (scale1.read() - offset1) / factor1;
+  float p2 = (scale2.read() - offset2) / factor2;
+  float p3 = (scale3.read() - offset3) / factor3;
+  float p4 = (scale4.read() - offset4) / factor4;
+  
+  float poidsBrut = p1 + p2 + p3 + p4;
+  poidsTotal = poidsBrut - tarePlateau; // Application de la tare
+
+  dht.read();
+  humidite = dht.getHumidity();
+  sensors.requestTemperatures();
+  tempC = sensors.getTempCByIndex(0);
+
+  // 2. AFFICHAGE DE DIAGNOSTIC (Série)
+  Serial.println("\n--- DIAGNOSTIC CAPTEURS ---");
+  Serial.printf("P1:%.3f | P2:%.3f | P3:%.3f | P4:%.3f\n", p1, p2, p3, p4);
+  Serial.printf("MASSE UTILE : %.3f kg (Brut: %.3f)\n", poidsTotal, poidsBrut);
+  Serial.printf("ENVIRONNEMENT: %.2f C | %.1f %%\n", tempC, humidite);
+
+  // 3. ENVOI LORA
+  // Formatage : Temp*100 ; Hum ; Poids*10
+  long tEnv = (long)(tempC * 100);
+  int hEnv = (int)humidite;
+  long mEnv = (long)(poidsTotal * 10);
+
+  char payloadText[32];
+  sprintf(payloadText, "%+06ld;%03d;%04ld", tEnv, hEnv, mEnv);
+
+  Serial.print("[LORA] Envoi TTN : "); Serial.println(payloadText);
+  
+  loRaSerial.print("AT+MSG=\"");
+  loRaSerial.print(payloadText);
+  loRaSerial.print("\"\r\n");
+  
+  lireLoRa(); // Affiche "Done" ou "Error" du module
+
+  // 4. ATTENTE (30 secondes pour respecter le réseau)
+  delay(30000); 
+}
